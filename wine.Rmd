@@ -1,0 +1,353 @@
+---
+title: "Wine"
+author: "Christopher Diaz"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(ggfortify)
+library(ISLR)
+library(glmnet)
+library(gridExtra)
+library(expm)
+library(GGally)
+library(caret)
+library(modelr)
+library(olsrr)
+```
+
+
+```{r}
+wine_test_final <-read.csv("wine_test.csv")
+wine_train_full <- read.csv("wine_train.csv")
+set.seed(5650)
+train_index <- createDataPartition(wine_train_full$quality,
+                                                       p = 0.75,
+                                                       list = FALSE)
+wine_train_train <- wine_train_full[train_index,]
+wine_train_test <- wine_train_full[-train_index,]
+
+names(wine_train_test)
+names(wine_train_train)
+```
+
+```{r}
+for(i in 1:ncol(wine_train_train)){
+  
+  p1 <- ggplot(wine_train_train, aes(x=wine_train_train[,i], y=quality, col=type)) +
+    geom_jitter() +
+    geom_smooth(method="lm", se=FALSE) +
+    labs(x=colnames(wine_train_train)[i])
+  print(p1)
+}
+```
+
+```{r}
+m0 <- train(quality ~ fixed.acidity * citric.acid * residual.sugar *
+            chlorides * density * sulphates * type,
+            data = wine_train_train,
+            method = "lm",
+            trControl = cv_control)
+
+autoplot(m0$finalModel)
+
+```
+
+```{r}
+full <- lm(quality ~ (.-ID)*(.-ID),
+           data = wine_train_train)
+autoplot(full)
+```
+
+```{r}
+cv_control <- trainControl(
+  method = "LOOCV"
+)
+m0 <- train(quality ~ . -ID,
+            data = wine_train_train,
+            trControl = cv_control,
+            method = "lm")
+
+lambda_grid <- 10^(seq(-2,4,length=100))
+m_r <- train(quality ~ . - ID,
+             data = wine_train_train,
+             method = "glmnet",
+             tuneGrid = expand.grid(alpha = 0,
+                                    lambda = lambda_grid),
+             trControl = cv_control)
+p1 <- plot(m_r, xTrans=log10, main="Ridge")
+
+lambda_grid2 <- 10^(seq(-5,1,length=100))
+
+m_l <- train(quality ~ . - ID,
+             data = wine_train_train,
+             method = "glmnet",
+             tuneGrid = expand.grid(alpha = 1,
+                                    lambda = lambda_grid2),
+             trControl = cv_control)
+p2 <- plot(m_l, xTrans=log10, main="Lasso")
+grid.arrange(p1,p2, ncol=2)
+```
+
+```{r}
+cv_control <- trainControl(
+  method = "LOOCV"
+)
+
+lambda_grid <- 10^(seq(-2,4,length=100))
+m_r2 <- train(quality ~ (. +          
+                                   log(fixed.acidity) +
+                                   log(volatile.acidity) +
+                                   log(chlorides) +
+                                   sqrt(free.sulfur.dioxide) +
+                                   log(sulphates)) -
+                                   type - fixed.acidity -citric.acid -
+                                   type:residual.sugar - type:chlorides - 
+                                   type:free.sulfur.dioxide - type:density -
+                                  type:pH - type:alcohol - type:log(fixed.acidity) -
+                                   type:log(volatile.acidity) - type:log(chlorides),
+             data = wine_train_train,
+             method = "glmnet",
+             tuneGrid = expand.grid(alpha = 0,
+                                    lambda = lambda_grid),
+             trControl = cv_control)
+p1 <- plot(m_r2, xTrans=log10, main="Ridge")
+
+lambda_grid2 <- 10^(seq(-5,1,length=100))
+
+m_l2 <- train(quality ~ (. +          
+                                   log(fixed.acidity) +
+                                   log(volatile.acidity) +
+                                   log(chlorides) +
+                                   sqrt(free.sulfur.dioxide) +
+                                   log(sulphates)) -
+                                   type - fixed.acidity -citric.acid -
+                                   type:residual.sugar - type:chlorides - 
+                                   type:free.sulfur.dioxide - type:density -
+                                  type:pH - type:alcohol - type:log(fixed.acidity) -
+                                   type:log(volatile.acidity) - type:log(chlorides),
+             data = wine_train_train,
+             method = "glmnet",
+             tuneGrid = expand.grid(alpha = 1,
+                                    lambda = lambda_grid2),
+             trControl = cv_control)
+p2 <- plot(m_l2, xTrans=log10, main="Lasso")
+grid.arrange(p1,p2, ncol=2)
+
+
+#m_l2 <- train(quality ~ density + alcohol + fixed.acidity*residual.sugar +
+#              fixed.acidity*pH + fixed.acidity*type[white] +
+#              reidual.sugar*free.sulfur.dioxide +
+#             chlorides*total.sulfur.dioxide +
+#             free.sulfur.dioxide*total.sulfur.dioxide +
+#             free.sulfur.dioxide*alcohol +
+#             free.sulfur.dioxide*type[white] +
+#             pH*sulphates +
+#             pH*alcohol +
+#             sulphates*alcohol +
+#             alcohol*type[white],
+#             data = wine_train_train,
+#             )
+```
+
+```{r}
+wine_train_res <- wine_train_train %>% spread_predictions(m0, m_l, m_l2, m_r, m_r2)
+rbind(
+  c("m_l", wine_train_res %>% yardstick::rmse(truth=quality, estimate=m_l)),
+  c("m_l2", wine_train_res %>% yardstick::rmse(truth=quality, estimate=m_l2)),
+  c("m_r", wine_train_res %>% yardstick::rmse(truth=quality, estimate=m_r)),
+  c("m_r2", wine_train_res %>% yardstick::rmse(truth=quality, estimate=m_r2))
+)
+
+rbind(
+m_l2$results %>% filter(lambda == m_l2$best$lambda),
+m_r2$results %>% filter(lambda == m_r2$best$lambda)
+)
+```
+
+
+
+
+
+
+```{r}
+wine_train_res <- wine_train_train %>% spread_residuals(m_l2)
+p <- ggplot(wine_train_res, aes(y = m_l2, color=type))
+p1 <- p + geom_jitter(aes(x=fixed.acidity)) + facet_wrap(vars(type))
+p2 <- p + geom_jitter(aes(x=citric.acid)) + facet_wrap(vars(type))
+p3 <- p + geom_jitter(aes(x=residual.sugar)) + facet_wrap(vars(type))
+p4 <- p + geom_jitter(aes(x=chlorides)) + facet_wrap(vars(type))
+p5 <- p + geom_jitter(aes(x=density)) + facet_wrap(vars(type))
+p6 <- p + geom_jitter(aes(x=pH)) + facet_wrap(vars(type))
+p7 <- p + geom_jitter(aes(x=sulphates)) + facet_wrap(vars(type))
+grid.arrange(p1,p2)
+grid.arrange(p3,p4)
+grid.arrange(p5,p6)
+grid.arrange(p7)
+```
+
+
+
+
+
+
+
+
+```{r}
+Sandra_Lasso_model <- train(quality ~ type*(. +          
+                                   log(fixed.acidity) +
+                                   log(volatile.acidity) +
+                                   log(chlorides) +
+                                   sqrt(free.sulfur.dioxide) +
+                                   log(sulphates)) -
+                                   type - fixed.acidity -citric.acid -
+                                   type:residual.sugar - type:chlorides - 
+                                   type:free.sulfur.dioxide - type:density -
+                                  type:pH - type:alcohol - type:log(fixed.acidity) -
+                                   type:log(volatile.acidity) - type:log(chlorides),
+               tuneGrid = expand.grid(alpha = 1,
+                                    lambda = 0.0003274549	),
+               trControl = cv_control,
+               method = "glmnet",
+               data = wine_train_train)
+
+Sandra_Ridge_model <- train(quality ~ type*(. +          
+                                   log(fixed.acidity) +
+                                   log(volatile.acidity) +
+                                   log(chlorides) +
+                                   sqrt(free.sulfur.dioxide) +
+                                   log(sulphates)) -
+                                   type - fixed.acidity -citric.acid -
+                                   type:residual.sugar - type:chlorides - 
+                                   type:free.sulfur.dioxide - type:density -
+                                  type:pH - type:alcohol - type:log(fixed.acidity) -
+                                   type:log(volatile.acidity) - type:log(chlorides),
+                            tuneGrid = expand.grid(alpha = 0,
+                                    lambda = 0.0403701726		),
+                           trControl = cv_control,
+                           method = "glmnet",
+                           data = wine_train_train)
+wine_train_test_pred <- wine_train_test %>% spread_predictions(Sandra_Lasso_model, 
+                                                               Sandra_Ridge_model)
+
+p <- ggplot(wine_train_test_pred, aes(y =Sandra_Lasso_model, color=type))
+p1 <- p + geom_point(aes(x=fixed.acidity)) + facet_wrap(vars(type))
+p2 <- p + geom_point(aes(x=citric.acid)) + facet_wrap(vars(type))
+p3 <- p + geom_point(aes(x=residual.sugar)) + facet_wrap(vars(type))
+p4 <- p + geom_point(aes(x=chlorides)) + facet_wrap(vars(type))
+p5 <- p + geom_point(aes(x=density)) + facet_wrap(vars(type))
+p6 <- p + geom_point(aes(x=pH)) + facet_wrap(vars(type))
+p7 <- p + geom_point(aes(x=sulphates)) + facet_wrap(vars(type))
+grid.arrange(p1,p2)
+grid.arrange(p3,p4)
+grid.arrange(p5,p6)
+grid.arrange(p7)
+
+p <- ggplot(wine_train_test_pred, aes(y= Sandra_Ridge_model, color=type))
+p1 <- p + geom_point(aes(x=fixed.acidity)) + facet_wrap(vars(type))
+p2 <- p + geom_point(aes(x=citric.acid)) + facet_wrap(vars(type))
+p3 <- p + geom_point(aes(x=residual.sugar)) + facet_wrap(vars(type))
+p4 <- p + geom_point(aes(x=chlorides)) + facet_wrap(vars(type))
+p5 <- p + geom_point(aes(x=density)) + facet_wrap(vars(type))
+p6 <- p + geom_point(aes(x=pH)) + facet_wrap(vars(type))
+p7 <- p + geom_point(aes(x=sulphates)) + facet_wrap(vars(type))
+grid.arrange(p1,p2)
+grid.arrange(p3,p4)
+grid.arrange(p5,p6)
+grid.arrange(p7)
+
+
+wine_train_res <- wine_train_train %>% spread_predictions(Sandra_Lasso_model,Sandra_Ridge_model)
+rbind(
+  c("SR", wine_train_res %>% yardstick::rmse(truth=quality, estimate=Sandra_Ridge_model)),
+  c("SL", wine_train_res %>% yardstick::rmse(truth=quality, estimate=Sandra_Lasso_model))
+)
+
+wine_train_test_pred <- wine_train_test %>% spread_predictions(Sandra_Lasso_model, 
+                                                               Sandra_Ridge_model)
+rbind(
+  c("SR", wine_train_test_pred %>% yardstick::rmse(truth=quality, estimate=Sandra_Ridge_model)),
+  c("SL", wine_train_test_pred %>% yardstick::rmse(truth=quality, estimate=Sandra_Lasso_model))
+)
+```
+
+```{r}
+cv_control <- trainControl(method = "cv", number=3)
+lambda_gridd <- 10^seq(-5,2, length=100)
+set.seed(5650)
+lasso1 <- train(quality ~ type*(. +           # interaction to everything
+                  log(fixed.acidity) +
+                  log(volatile.acidity) +
+                  log(chlorides) +
+                  sqrt(free.sulfur.dioxide) +
+                  log(sulphates)),
+                data = wine_train,
+                trControl=cv_control,
+                method="glmnet",
+                tuneGrid=expand.grid(alpha=1, lambda=lambda_gridd))
+
+pp<-plot(lasso1, xTrans=log10, main="Lasso")
+coef(lasso1$finalModel, lasso1$finalModel$lambdaOpt)
+lambda_griddd <- 10^seq(-6,1, length=100)
+set.seed(5650)
+ridge1 <- train(quality ~ type*(. +           # interaction to everything
+                  log(fixed.acidity) +
+                  log(volatile.acidity) +
+                  log(chlorides) +
+                  sqrt(free.sulfur.dioxide) +
+                  log(sulphates)),
+                data = wine_train,
+                trControl=cv_control,
+                method="glmnet",
+                tuneGrid=expand.grid(alpha=0, lambda=lambda_griddd))
+
+ppp<-plot(ridge1, xTrans=log10, main="Ridge")
+grid.arrange(pp,ppp)
+coef(ridge1$finalModel, ridge1$finalModel$lambdaOpt)
+wine_train_res <- wine_train_test %>% spread_predictions(ridge1, lasso1)
+
+rbind(
+  c("ridge1", wine_train_res %>% yardstick::rmse(truth=quality, estimate=ridge1)),
+  c("lasso1", wine_train_res %>% yardstick::rmse(truth=quality, estimate=lasso1))
+)
+
+```
+```{r}
+cv_control <- trainControl(method = "cv", number=3)
+lambda_gridd <- 10^seq(-5,2, length=100)
+set.seed(5650)
+lasso1 <- train(quality ~ .,
+                data = wine_train,
+                trControl=cv_control,
+                method="glmnet",
+                tuneGrid=expand.grid(alpha=1, lambda=lambda_gridd))
+
+pp<-plot(lasso1, xTrans=log10, main="Lasso")
+coef(lasso1$finalModel, lasso1$finalModel$lambdaOpt)
+lambda_griddd <- 10^seq(-6,1, length=100)
+set.seed(5650)
+ridge1 <- train(quality ~ .,
+                data = wine_train,
+                trControl=cv_control,
+                method="glmnet",
+                tuneGrid=expand.grid(alpha=0, lambda=lambda_griddd))
+
+ppp<-plot(ridge1, xTrans=log10, main="Ridge")
+grid.arrange(pp,ppp)
+coef(ridge1$finalModel, ridge1$finalModel$lambdaOpt)
+wine_train_res <- wine_train_test %>% spread_predictions(ridge1, lasso1)
+
+rbind(
+  c("ridge1", wine_train_res %>% yardstick::rmse(truth=quality, estimate=ridge1)),
+  c("lasso1", wine_train_res %>% yardstick::rmse(truth=quality, estimate=lasso1))
+)
+
+```
+
